@@ -4,12 +4,12 @@ from app.llm.openrouter_client import query_llm
 from app.rag.pipeline import load_documents
 from app.rag.retriever import build_vector_db
 
-# Persistent memory (could be replaced with a DB)
+# Persistent memory (can be replaced with a DB)
 MEMORY_STORE = []
 
 
 class TrueAgenticComplianceOrchestrator:
-    """A truly agentic compliance AI orchestrator with dynamic planning and memory."""
+    """Agentic compliance AI orchestrator with structured risk assessment and control tracking."""
 
     def __init__(self):
         self.memory = MEMORY_STORE
@@ -20,11 +20,9 @@ class TrueAgenticComplianceOrchestrator:
         context = ""
         if documents:
             collection = build_vector_db(documents, metadatas)
-            ###################################################print 
             print("Querying RAG with policy context:\n", json.dumps(policy_json, indent=2))
             for meta in metadatas:
-                print(f"Metadata: {meta}")  
-            ###################################################
+                print(f"Metadata: {meta}")
             results = collection.query(
                 query_texts=[json.dumps(policy_json)],
                 n_results=5,
@@ -47,25 +45,41 @@ class TrueAgenticComplianceOrchestrator:
             steps = self.plan_steps(goal, full_context)
             plan.append({"goal": goal, "steps": steps})
 
-        # 4️⃣ Execute plan and collect results
+        # 4️⃣ Execute plan and collect structured results
         results = []
         for item in plan:
             goal = item["goal"]
             steps = item["steps"]
             goal_results = []
             for step_prompt in steps:
-                raw = query_llm(step_prompt)
+                prompt_text = step_prompt if isinstance(step_prompt, str) else json.dumps(step_prompt)
+                raw = query_llm(prompt_text)
                 clean_output = raw.replace("```json", "").replace("```", "").strip()
+                # Try to parse structured JSON; fallback to raw
                 try:
-                    goal_results.append(json.loads(clean_output))
+                    parsed = json.loads(clean_output)
+                    # Ensure required keys exist
+                    goal_results.append({
+                        "Risk": parsed.get("Risk", "UNKNOWN"),
+                        "Controls": parsed.get("Controls", []),
+                        "Recommendation": parsed.get("Recommendation", ""),
+                        "Data_Requirements": parsed.get("Data_Requirements", [])
+                    })
                 except Exception:
-                    goal_results.append({"Result": clean_output})
+                    goal_results.append({
+                        "Risk": "UNKNOWN",
+                        "Controls": [],
+                        "Recommendation": clean_output,
+                        "Data_Requirements": []
+                    })
             results.append({"goal": goal, "results": goal_results})
 
         # 5️⃣ Store results in memory for future runs
         self.update_memory(policy_json, results)
+        policy_risk = self.assess_policy_risk(results)
 
-        return {"policy": policy_json, "plan": plan, "results": results}
+        # 6️⃣ Return full structured JSON
+        return {"policy": policy_json, "plan": plan, "results": results, "policy_risk": policy_risk}
 
     def generate_goals(self, context, policy_json):
         prompt = f"""
@@ -79,12 +93,8 @@ class TrueAgenticComplianceOrchestrator:
 
         Rules:
         - No markdown
-        - No explanation
         - No text before or after JSON
-        - Output must be a JSON array of steps
-
-        Example:
-        ["step1","step2","step3"]
+        Example: ["goal1","goal2"]
         """
         res = query_llm(prompt)
         clean = res.replace("```json", "").replace("```", "").strip()
@@ -94,7 +104,6 @@ class TrueAgenticComplianceOrchestrator:
                 return goals
         except:
             pass
-        # fallback
         return ["ANALYZE policy compliance"]
 
     def plan_steps(self, goal, context):
@@ -105,7 +114,13 @@ class TrueAgenticComplianceOrchestrator:
         Goal: {goal}
 
         Generate 2-4 step-by-step actions to achieve this goal.
-        Return JSON array of string steps.
+        Each step must output structured JSON with keys:
+        - Risk (LOW/MEDIUM/HIGH/UNKNOWN)
+        - Controls (array of existing controls related to the step)
+        - Recommendation (action to mitigate risk)
+        - Data_Requirements (evidence or data needed to validate controls)
+        
+        Return a JSON array of these structured objects.
         """
         res = query_llm(prompt)
         clean = res.replace("```json", "").replace("```", "").strip()
@@ -114,10 +129,29 @@ class TrueAgenticComplianceOrchestrator:
             if isinstance(steps, list):
                 return steps
         except:
-            return [f"Analyze and provide recommendations for: {goal}"]
+            return [{"Risk": "UNKNOWN", "Controls": [], "Recommendation": f"Analyze: {goal}", "Data_Requirements": []}]
         return steps
 
     def update_memory(self, policy_json, results):
         """Store summary of actions for future context."""
         summary = f"Policy {policy_json.get('policy_name', 'Unnamed')} processed with {len(results)} goals."
         self.memory.append({"policy": policy_json, "results": results, "summary": summary})
+
+    # Add this method inside TrueAgenticComplianceOrchestrator
+    def assess_policy_risk(self, results):
+        """Aggregate step-level risks into an overall policy risk."""
+        risk_weights = {"HIGH": 3, "MEDIUM": 2, "LOW": 1, "UNKNOWN": 2}
+        total_score = 0
+        count = 0
+        for item in results:
+            for step in item["results"]:
+                r = step.get("Risk", "UNKNOWN")
+                total_score += risk_weights.get(r, 2)
+                count += 1
+        avg_score = total_score / max(count, 1)
+        if avg_score >= 2.5:
+            return "HIGH"
+        elif avg_score >= 1.5:
+            return "MEDIUM"
+        else:
+            return "LOW"  
