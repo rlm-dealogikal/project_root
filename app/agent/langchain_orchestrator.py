@@ -1,5 +1,7 @@
 # /app/agent/langchain_orchestrator.py
 import json
+#from bleach import clean
+#from typer import prompt
 from app.llm.openrouter_client import query_llm
 from app.rag.pipeline import load_documents
 from app.rag.retriever import build_vector_db
@@ -108,30 +110,77 @@ class TrueAgenticComplianceOrchestrator:
 
     def plan_steps(self, goal, context):
         prompt = f"""
-        You are a compliance planner agent.
+You are a compliance planner agent.
 
-        Context: {context}
-        Goal: {goal}
+Context: {context}
+Goal: {goal}
 
-        Generate 2-4 step-by-step actions to achieve this goal.
-        Each step must output structured JSON with keys:
-        - Risk (LOW/MEDIUM/HIGH/UNKNOWN)
-        - Controls (array of existing controls related to the step)
-        - Recommendation (action to mitigate risk)
-        - Data_Requirements (evidence or data needed to validate controls)
-        
-        Return a JSON array of these structured objects.
-        """
+Generate 2-4 step-by-step actions to achieve this goal.
+Each step must output structured JSON with keys:
+- Risk (LOW/MEDIUM/HIGH/UNKNOWN)
+- Controls (array of control objects with fields:
+    Control Object,
+    Control Type (Preventative, Detective, Corrective),
+    Purpose,
+    Scope: {{
+        Department,
+        Department_Role,
+        Department_Role_Scope,
+        Document used
+    }}
+  )
+- Recommendation (action to mitigate risk)
+- Data_Requirements (evidence or data needed to validate controls)
+
+Return a JSON array of these structured objects.
+"""
         res = query_llm(prompt)
         clean = res.replace("```json", "").replace("```", "").strip()
         try:
             steps = json.loads(clean)
             if isinstance(steps, list):
-                return steps
-        except:
-            return [{"Risk": "UNKNOWN", "Controls": [], "Recommendation": f"Analyze: {goal}", "Data_Requirements": []}]
-        return steps
+                # Ensure every control is structured
+                for step in steps:
+                    controls = step.get("Controls", [])
+                    structured_controls = []
+                    for c in controls:
+                        if isinstance(c, str):
+                            structured_controls.append({
+                                "Control Object": c,
+                                "Control Type": "",
+                                "Purpose": c,
+                                "Scope": {
+                                    "Department": "",
+                                    "Department_Role": "",
+                                    "Department_Role_Scope": "",
+                                    "Document used": ""
+                                    }
+                                })
 
+                        elif isinstance(c, dict):
+                            structured_controls.append(c)
+                    step["Controls"] = structured_controls
+                return steps
+        except Exception:
+            # Fallback: produce meaningful placeholder controls instead of copying the goal
+            placeholder_control = {
+                "Control Object": f"{goal} Control",
+                "Control Type": "Preventative",
+                "Purpose": f"Mitigate risks related to {goal}",
+                "Scope": {
+                    "Department": "Relevant Department",
+                    "Department_Role": "Responsible Role",
+                    "Department_Role_Scope": "Scope of Responsibility",
+                    "Document used": "Relevant Policy/Procedure Document"
+                    }
+                }
+            return [{
+                "Risk": "UNKNOWN",
+                "Controls": [placeholder_control],
+                "Recommendation": f"Analyze and implement measures for {goal}",
+                "Data_Requirements": ["Evidence or records to validate controls"]
+            }]
+        
     def update_memory(self, policy_json, results):
         """Store summary of actions for future context."""
         summary = f"Policy {policy_json.get('policy_name', 'Unnamed')} processed with {len(results)} goals."
