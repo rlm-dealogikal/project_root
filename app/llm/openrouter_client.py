@@ -1,3 +1,4 @@
+# /app/llm/openrouter_client.py
 from langchain_openrouter import ChatOpenRouter
 from langchain_core.messages import SystemMessage, HumanMessage
 from config.settings import OPENROUTER_API_KEY, MISTRAL_MODEL_ID
