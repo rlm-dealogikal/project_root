@@ -4,5 +4,6 @@ __pycache__/
 *.pyo
 *.pyd
 vector_db/
+chroma/
 .gitignore
 chroma.sqlite3
